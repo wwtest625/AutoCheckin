@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon\r\r
+
+# Swift Package Manager
+.build/
+Packages/
+Package.pins
+Package.resolved
+.swiftpm/
+
+# Build Products & App Bundles
+AutoCheckin.app/
+*.app
+*.dSYM
+
+# Local User Data / Saved Credentials
+saved_accounts.json
+*.log
+scratch/
