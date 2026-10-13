@@ -183,7 +183,7 @@ struct ContentView: View {
             
             Spacer()
             
-            Text("安全说明：本地内存解密，凭证绝不上报")
+            Text("安全说明：本地解密 · 凭证只存本机私有目录 · 绝不上报第三方")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }

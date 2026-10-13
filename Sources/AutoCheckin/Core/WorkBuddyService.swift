@@ -5,34 +5,59 @@ struct WorkBuddyService {
     static let resourceApi = "https://copilot.tencent.com/billing/meter/get-user-resource-summary"
     
     // MARK: - Scan Local Accounts
-    static func scanAccounts() -> [AccountItem] {
-        var results: [AccountItem] = []
+    static func scanAccounts() -> ScanOutput {
+        var output = ScanOutput()
         var seenUids = Set<String>()
         var seenUins = Set<String>()
         
         let authDir = NSString(string: "~/Library/Application Support/CodeBuddyExtension/Data/Public/auth").expandingTildeInPath
         let fm = FileManager.default
         
+        guard fm.fileExists(atPath: authDir) else {
+            output.notices.append(ScanNotice(.warning, "[WorkBuddy] 未找到凭证目录 \(authDir)，请确认已安装并登录 WorkBuddy 或 CodeBuddy 客户端"))
+            return output
+        }
+        
         guard let files = try? fm.contentsOfDirectory(atPath: authDir) else {
-            return []
+            output.notices.append(ScanNotice(.error, "[WorkBuddy] 凭证目录存在但无法列出内容：\(authDir)"))
+            return output
+        }
+        
+        let candidates = files.filter { $0.hasSuffix(".info") }
+        guard !candidates.isEmpty else {
+            output.notices.append(ScanNotice(.warning, "[WorkBuddy] 凭证目录下没有 .info 登录态文件，客户端可能尚未登录"))
+            return output
         }
         
         // 优先处理官方桌面版 workbuddy-desktop.info，其次才是插件端
-        let sortedFiles = files.sorted { f1, f2 in
+        let sortedFiles = candidates.sorted { f1, f2 in
             if f1.contains("workbuddy-desktop") { return true }
             if f2.contains("workbuddy-desktop") { return false }
             return f1 < f2
         }
         
-        for file in sortedFiles where file.hasSuffix(".info") {
+        for file in sortedFiles {
             let filePath = (authDir as NSString).appendingPathComponent(file)
             guard let data = try? Data(contentsOf: URL(fileURLWithPath: filePath)),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let auth = json["auth"] as? [String: Any],
-                  let accountDict = json["account"] as? [String: Any],
-                  let uid = accountDict["uid"] as? String,
-                  let tokenEnc = auth["accessToken"],
-                  let token = try? CryptoUtils.decryptWbField(value: tokenEnc) else {
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                output.notices.append(ScanNotice(.error, "[WorkBuddy] \(file) 无法读取或 JSON 解析失败"))
+                continue
+            }
+            guard let auth = json["auth"] as? [String: Any],
+                  let accountDict = json["account"] as? [String: Any] else {
+                output.notices.append(ScanNotice(.warning, "[WorkBuddy] \(file) 缺少 auth 或 account 字段，结构可能已变更"))
+                continue
+            }
+            guard let uid = accountDict["uid"] as? String, !uid.isEmpty else {
+                output.notices.append(ScanNotice(.warning, "[WorkBuddy] \(file) 缺少 account.uid，无法建立稳定账号标识"))
+                continue
+            }
+            guard let tokenEnc = auth["accessToken"] else {
+                output.notices.append(ScanNotice(.warning, "[WorkBuddy] \(file) 的 auth 中没有 accessToken"))
+                continue
+            }
+            guard let token = try? CryptoUtils.decryptWbField(value: tokenEnc), !token.isEmpty else {
+                output.notices.append(ScanNotice(.error, "[WorkBuddy] \(file) 凭证解密失败：加密格式可能已更新，需要适配 CryptoUtils.decryptWbField"))
                 continue
             }
             
@@ -40,6 +65,7 @@ struct WorkBuddyService {
             
             // 按 uid 与 uin 强去重，避免同一个用户因多客户端（IDE插件+桌面端）重复显示
             if seenUids.contains(uid) || (!uin.isEmpty && seenUins.contains(uin)) {
+                output.notices.append(ScanNotice(.info, "[WorkBuddy] \(file) 与已扫描账号重复（\(uin.isEmpty ? uid : uin)），跳过"))
                 continue
             }
             
@@ -50,10 +76,14 @@ struct WorkBuddyService {
             
             let domain = (auth["domain"] as? String) ?? ""
             
-            // 解密真实昵称与手机号
+            // 解密真实昵称与手机号（展示字段失败不影响账号可用性）
             var nickname = ""
             if let nickEnc = accountDict["nickname"] {
-                nickname = (try? CryptoUtils.decryptWbField(value: nickEnc)) ?? ""
+                if let value = try? CryptoUtils.decryptWbField(value: nickEnc) {
+                    nickname = value
+                } else {
+                    output.notices.append(ScanNotice(.warning, "[WorkBuddy] \(file) 昵称解密失败，改用脱敏手机号或默认名称显示"))
+                }
             }
             var phone = ""
             if let phoneEnc = accountDict["phoneNumber"] {
@@ -69,11 +99,13 @@ struct WorkBuddyService {
             if expiresAt > 0 && expiresAt / 1000.0 < Date().timeIntervalSince1970 {
                 initialStatus = .expired
                 initialDetail = "登录态已过期，请在客户端重新登录"
+                output.notices.append(ScanNotice(.warning, "[WorkBuddy] 账号 \(displayName) 的登录态已于 \(formattedDate(expiresAt / 1000.0)) 过期，签到会被跳过"))
             }
             
             let item = AccountItem(
-                id: "wb-\(results.count + 1)",
+                id: AccountItem.makeId(platform: .workbuddy, rawId: uid),
                 platform: .workbuddy,
+                rawId: uid,
                 name: displayName,
                 phone: phone,
                 uid: !uin.isEmpty ? "UIN: \(uin)" : "UID: \(uid.prefix(8))...",
@@ -85,10 +117,16 @@ struct WorkBuddyService {
                 status: initialStatus,
                 statusDetail: initialDetail
             )
-            results.append(item)
+            output.accounts.append(item)
         }
         
-        return results
+        return output
+    }
+    
+    private static func formattedDate(_ seconds: Double) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter.string(from: Date(timeIntervalSince1970: seconds))
     }
     
     private static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) WorkBuddy/5.8.2 Chrome/120.0.0.0 Electron/28.2.0 Safari/537.36"
@@ -153,8 +191,8 @@ struct WorkBuddyService {
         request.httpBody = "{}".data(using: .utf8)
         
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
-            throw URLError(.badServerResponse)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw ApiError.httpFailure(response: response, data: data, context: "[\(account.name)] 签到状态查询")
         }
         
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -216,11 +254,8 @@ struct WorkBuddyService {
             }
         }
         
-        guard let httpResp = response as? HTTPURLResponse, (200...299).contains(httpResp.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
-        
-        return (false, 0, "未知异常")
+        // 响应体不是预期 JSON：把状态码与片段抛出去，方便日志判断是被网关拦截还是格式变更
+        throw ApiError.httpFailure(response: response, data: data, context: "[\(account.name)] 签到响应无法解析")
     }
     
     private static func getRawUid(for account: AccountItem) -> String {
@@ -237,12 +272,11 @@ struct WorkBuddyService {
             }
         }
         
-        // 兜底：从 account.uid 字段提取原始值（去掉 "UIN: "/"UID: " 前缀与省略号）
-        let raw = account.uid
-            .replacingOccurrences(of: "UIN: ", with: "")
-            .replacingOccurrences(of: "UID: ", with: "")
-            .replacingOccurrences(of: "...", with: "")
-            .trimmingCharacters(in: .whitespaces)
-        return raw
+        // 兜底 1：扫描时记录的真实 uid（稳定、无前缀）
+        if !account.rawId.isEmpty {
+            return account.rawId
+        }
+        // 兜底 2：兼容旧持久化数据，从展示字段剥离前缀与省略号
+        return AccountItem.extractRawId(from: account.uid)
     }
 }

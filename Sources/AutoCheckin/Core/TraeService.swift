@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 struct TraeService {
     static let apiBase = "https://api.trae.cn/trae/api/v2/ug/checkin_credits"
@@ -6,11 +7,12 @@ struct TraeService {
     static let authKey = "iCubeAuthInfo://icube.cloudide"
     
     // MARK: - Scan Local & Magpie Domestic Accounts
-    static func scanAccounts() -> [AccountItem] {
-        var results: [AccountItem] = []
+    static func scanAccounts() -> ScanOutput {
+        var output = ScanOutput()
         var seenTokens = Set<String>()
         var seenUserIds = Set<String>()
-        
+        var scannedDirs = 0
+
         // 1. 扫描本地 Trae CN 客户端目录
         let possibleDirs = [
             "~/Library/Application Support/Trae CN",
@@ -22,18 +24,41 @@ struct TraeService {
             let expandedDir = NSString(string: dirStr).expandingTildeInPath
             let storagePath = (expandedDir as NSString).appendingPathComponent("User/globalStorage/storage.json")
             
-            guard FileManager.default.fileExists(atPath: storagePath),
-                  let data = try? Data(contentsOf: URL(fileURLWithPath: storagePath)),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let authB64 = json[authKey] as? String,
-                  let authInfo = try? CryptoUtils.decryptTraeAuth(b64Text: authB64),
-                  let token = authInfo["token"] as? String,
-                  !seenTokens.contains(token) else {
+            // 目录/文件不存在属正常情况（用户没装这个客户端），留到末尾汇总提示。
+            guard FileManager.default.fileExists(atPath: storagePath) else { continue }
+            scannedDirs += 1
+            
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: storagePath)),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                output.notices.append(ScanNotice(.error, "[Trae] 登录态文件无法读取或 JSON 解析失败：\(storagePath)"))
+                continue
+            }
+            
+            guard let authB64 = json[authKey] as? String, !authB64.isEmpty else {
+                output.notices.append(ScanNotice(.warning, "[Trae] \(dirStr) 的 storage.json 里没有登录态字段「\(authKey)」，客户端可能未登录或已更换存储键名"))
+                continue
+            }
+            
+            guard let authInfo = try? CryptoUtils.decryptTraeAuth(b64Text: authB64) else {
+                output.notices.append(ScanNotice(.error, "[Trae] \(dirStr) 登录态解密失败：Trae 的凭证加密格式可能已更新，需要适配 CryptoUtils.decryptTraeAuth"))
+                continue
+            }
+            
+            guard let token = authInfo["token"] as? String, !token.isEmpty else {
+                output.notices.append(ScanNotice(.error, "[Trae] \(dirStr) 登录态解密成功但其中没有 token，返回结构已变化"))
                 continue
             }
             
             let userId = "\(authInfo["userId"] ?? "")"
+            if userId.isEmpty {
+                output.notices.append(ScanNotice(.warning, "[Trae] \(dirStr) 的登录态缺少 userId，无法建立稳定账号标识"))
+            }
+            if seenTokens.contains(token) {
+                output.notices.append(ScanNotice(.info, "[Trae] \(dirStr) 与已扫描的账号凭证相同，跳过"))
+                continue
+            }
             if !userId.isEmpty && seenUserIds.contains(userId) {
+                output.notices.append(ScanNotice(.info, "[Trae] \(dirStr) 是重复登录的同一账号（UID: \(userId)），跳过"))
                 continue
             }
             seenTokens.insert(token)
@@ -51,9 +76,12 @@ struct TraeService {
             let avatar = (accountDict?["avatar_url"] as? String) ?? ""
             let displayName = !username.isEmpty ? username : (!phone.isEmpty ? phone : "Trae CN 用户")
             
+            // 稳定 ID：优先 userId，缺失时用凭证指纹兜底，保证与扫描顺序无关。
+            let rawId = !userId.isEmpty ? userId : "t-\(stableHash(of: token))"
             let account = AccountItem(
-                id: "trae-\(results.count + 1)",
+                id: AccountItem.makeId(platform: .trae, rawId: rawId),
                 platform: .trae,
+                rawId: rawId,
                 name: displayName,
                 phone: phone,
                 uid: "UID: \(userId)",
@@ -64,32 +92,53 @@ struct TraeService {
                 deviceId: deviceId,
                 domain: ""
             )
-            results.append(account)
+            output.accounts.append(account)
+        }
+        
+        if scannedDirs == 0 {
+            output.notices.append(ScanNotice(.warning, "[Trae] 未找到任何 Trae CN 客户端数据目录（已检查：\(possibleDirs.joined(separator: "、"))）"))
         }
         
         // 2. 扫描 Magpie 中保存的所有国内版 Trae CN 账号 (trae-cn, trae-cn#hash)
         let magpiePath = NSString(string: "~/.config/magpie/plugin-auth.json").expandingTildeInPath
-        if let data = try? Data(contentsOf: URL(fileURLWithPath: magpiePath)),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            for (key, val) in json {
-                // 仅同步国内版 (trae-cn, trae-cn#*)，严格忽略海外版 trae-global
-                if (key == "trae-cn" || key.hasPrefix("trae-cn#")),
-                   let dict = val as? [String: Any],
-                   let token = dict["access"] as? String,
-                   let uid = dict["uid"] as? String,
-                   !seenUserIds.contains(uid) {
+        if FileManager.default.fileExists(atPath: magpiePath) {
+            if let data = try? Data(contentsOf: URL(fileURLWithPath: magpiePath)),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                var magpieHit = 0
+                for (key, val) in json.sorted(by: { $0.key < $1.key }) {
+                    // 仅同步国内版 (trae-cn, trae-cn#*)，严格忽略海外版 trae-global
+                    guard key == "trae-cn" || key.hasPrefix("trae-cn#") else { continue }
+                    guard let dict = val as? [String: Any] else {
+                        output.notices.append(ScanNotice(.warning, "[Trae] Magpie 条目「\(key)」结构异常，已跳过"))
+                        continue
+                    }
+                    guard let token = dict["access"] as? String, !token.isEmpty,
+                          let uid = dict["uid"] as? String, !uid.isEmpty else {
+                        output.notices.append(ScanNotice(.warning, "[Trae] Magpie 条目「\(key)」缺少 access 或 uid，已跳过"))
+                        continue
+                    }
+                    if seenUserIds.contains(uid) {
+                        output.notices.append(ScanNotice(.info, "[Trae] Magpie 条目「\(key)」与客户端账号重复（UID: \(uid)），跳过"))
+                        continue
+                    }
                     
                     seenUserIds.insert(uid)
                     seenTokens.insert(token)
+                    magpieHit += 1
                     let accountId = dict["accountId"] as? String ?? "Trae CN 用户"
                     let magpieDeviceId = dict["deviceId"] as? String ?? ""
                     let localRealDeviceId = getDeviceId(baseDir: NSString(string: "~/Library/Application Support/Trae CN").expandingTildeInPath)
                     let deviceId = !localRealDeviceId.isEmpty ? localRealDeviceId : magpieDeviceId
                     let refresh = dict["refresh"] as? String ?? ""
                     
+                    if deviceId.isEmpty {
+                        output.notices.append(ScanNotice(.info, "[Trae] 未能从本地文件取到 Magpie 账号「\(accountId)」的 device id，签到可能触发设备风控（一机一日限一次）"))
+                    }
+                    
                     let account = AccountItem(
-                        id: "trae-\(results.count + 1)",
+                        id: AccountItem.makeId(platform: .trae, rawId: uid),
                         platform: .trae,
+                        rawId: uid,
                         name: accountId,
                         phone: "",
                         uid: "UID: \(uid)",
@@ -100,12 +149,23 @@ struct TraeService {
                         deviceId: deviceId,
                         domain: ""
                     )
-                    results.append(account)
+                    output.accounts.append(account)
                 }
+                if magpieHit == 0 {
+                    output.notices.append(ScanNotice(.info, "[Trae] Magpie 账号库中没有国内版（trae-cn）条目"))
+                }
+            } else {
+                output.notices.append(ScanNotice(.warning, "[Trae] Magpie 账号库无法解析：\(magpiePath)"))
             }
         }
         
-        return results
+        return output
+    }
+    
+    /// 用凭证生成短指纹，作为 userId 缺失时的稳定兜底标识。
+    private static func stableHash(of text: String) -> String {
+        let digest = SHA256.hash(data: Data(text.utf8))
+        return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
     
     static func getDeviceId(baseDir: String) -> String {
@@ -234,8 +294,8 @@ struct TraeService {
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["req_source": 1])
         
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
-            throw URLError(.badServerResponse)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw ApiError.httpFailure(response: response, data: data, context: "[\(account.name)] 签到状态查询")
         }
         
         guard let rawJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -271,8 +331,8 @@ struct TraeService {
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["req_source": 1])
         
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
-            throw URLError(.badServerResponse)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw ApiError.httpFailure(response: response, data: data, context: "[\(account.name)] 签到请求")
         }
         
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
