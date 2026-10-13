@@ -40,7 +40,7 @@ struct ContentView: View {
                 case 0:
                     accountsListView
                 case 1:
-                    LogConsoleView(logs: manager.logs) {
+                    LogConsoleView(manager: manager) {
                         manager.logs.removeAll()
                     }
                     .padding(16)

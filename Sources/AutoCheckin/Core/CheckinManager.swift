@@ -10,6 +10,11 @@ final class CheckinManager {
     var isScanning: Bool = false
     var selectedTab: Int = 0
     
+    // 日志控制台状态
+    var logFilterLevel: LogLevel? = nil
+    var logSearchText: String = ""
+    var logAutoScroll: Bool = true
+    
     // 偏好设置
     var autoCheckinEnabled: Bool {
         didSet {
