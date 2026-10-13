@@ -37,12 +37,17 @@ jobs:
         run: |
           bash Scripts/bundle.sh
 
-      - name: Compress App Bundle
+      - name: Package App Bundles (DMG & ZIP)
         run: |
-          # 使用 macOS 原生 ditto 工具打包，完整保留 bundle 签名与元数据
+          # 计算 bundle.sh 生成的 DMG 的 SHA256 校验码
+          shasum -a 256 AutoCheckin-macOS.dmg > AutoCheckin-macOS.dmg.sha256
+          
+          # 同时生成 ZIP 压缩备份包
           ditto -c -k --sequesterRsrc --keepParent AutoCheckin.app AutoCheckin-macOS.zip
           shasum -a 256 AutoCheckin-macOS.zip > AutoCheckin-macOS.zip.sha256
-          echo "SHA256 Checksum:"
+          
+          echo "=== Checksums ==="
+          cat AutoCheckin-macOS.dmg.sha256
           cat AutoCheckin-macOS.zip.sha256
 
       - name: Upload Artifact
@@ -50,6 +55,8 @@ jobs:
         with:
           name: AutoCheckin-macOS
           path: |
+            AutoCheckin-macOS.dmg
+            AutoCheckin-macOS.dmg.sha256
             AutoCheckin-macOS.zip
             AutoCheckin-macOS.zip.sha256
           retention-days: 14
@@ -59,6 +66,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            AutoCheckin-macOS.dmg
+            AutoCheckin-macOS.dmg.sha256
             AutoCheckin-macOS.zip
             AutoCheckin-macOS.zip.sha256
           generate_release_notes: true

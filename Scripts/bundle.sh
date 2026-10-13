@@ -75,3 +75,20 @@ touch "$APP_DIR"
 
 echo "✅ 打包完成！"
 echo "👉 应用文件位于: $APP_DIR"
+
+# 制作标准 macOS DMG 安装镜像（带 Applications 快捷拖拽安装入口）
+DMG_PATH="$DIR/AutoCheckin-macOS.dmg"
+echo "💿 正在生成 DMG 安装镜像: $DMG_PATH ..."
+DMG_TMP="$DIR/.dmg_temp"
+rm -rf "$DMG_TMP" "$DMG_PATH"
+mkdir -p "$DMG_TMP"
+cp -R "$APP_DIR" "$DMG_TMP/"
+ln -s /Applications "$DMG_TMP/Applications"
+
+hdiutil create -volname "AutoCheckin" \
+    -srcfolder "$DMG_TMP" \
+    -ov -format UDZO \
+    "$DMG_PATH" >/dev/null
+
+rm -rf "$DMG_TMP"
+echo "✅ DMG 镜像生成完成: $DMG_PATH"
