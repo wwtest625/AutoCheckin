@@ -2,6 +2,7 @@
 
 [![Platform](https://img.shields.io/badge/Platform-macOS%2014.0%2B-blue?logo=apple)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-6.0-orange?logo=swift)](https://swift.org/)
+[![Build & Package](https://github.com/wwtest625/AutoCheckin/actions/workflows/build.yml/badge.svg)](https://github.com/wwtest625/AutoCheckin/actions/workflows/build.yml)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Zero-Dependencies](https://img.shields.io/badge/Dependencies-Zero-brightgreen.svg)]()
 
