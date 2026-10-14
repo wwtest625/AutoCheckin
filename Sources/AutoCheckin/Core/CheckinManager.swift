@@ -93,8 +93,9 @@ final class CheckinManager {
         self.ignoredCount = AccountStorage.ignoredAccountIds().count
         self.launchAtLogin = LoginItemService.isEnabled
         
-        // 2. 启动定时器
+        // 2. 启动定时器并进行首次时间比对与跨天检查
         setupTimer()
+        checkScheduledTime()
     }
     
     func addLog(_ content: String, level: LogLevel = .info) {
@@ -304,6 +305,13 @@ final class CheckinManager {
         isCheckingAll = true
         addLog("============== 开始批量自动签到 ==============", level: .info)
         
+        // 1. 签到前先向官方服务器拉取最新的真实签到状态，防止跨天内存状态残留
+        addLog("正在同步所有账号今日最新签到状态...", level: .info)
+        for i in 0..<accounts.count {
+            await refreshSingleStatus(index: i)
+        }
+        
+        // 2. 逐一执行未完成签到的账号
         for acc in accounts {
             if acc.status == .alreadyCheckedIn {
                 addLog("[\(acc.platform.rawValue) - \(acc.name)] 今日已签到，跳过。", level: .info)
@@ -335,8 +343,6 @@ final class CheckinManager {
     }
     
     private func checkScheduledTime() {
-        guard autoCheckinEnabled else { return }
-        
         let now = Date()
         let cal = Calendar.current
         let hour = cal.component(.hour, from: now)
@@ -346,13 +352,42 @@ final class CheckinManager {
         formatter.dateFormat = "yyyy-MM-dd"
         let todayStr = formatter.string(from: now)
         
+        // 跨天自愈：检测到进入新的一天，自动重置账号卡片上的已签到状态为「今日待签」
+        let lastKnownDay = UserDefaults.standard.string(forKey: "currentWorkingDay") ?? ""
+        if lastKnownDay != todayStr {
+            UserDefaults.standard.set(todayStr, forKey: "currentWorkingDay")
+            var hasReset = false
+            for i in accounts.indices {
+                if accounts[i].status == .alreadyCheckedIn || accounts[i].status == .success {
+                    accounts[i].status = .pending
+                    accounts[i].statusDetail = "今日待签到"
+                    hasReset = true
+                }
+            }
+            if hasReset {
+                AccountStorage.saveAccounts(accounts)
+                addLog("🌅 跨入新的一天 (\(todayStr))，已重置账号为今日待签状态", level: .info)
+            }
+        }
+        
+        guard autoCheckinEnabled else { return }
+        
         let isPastScheduledTime = (hour > autoCheckinHour) || (hour == autoCheckinHour && minute >= autoCheckinMinute)
         
-        if isPastScheduledTime && lastRunDateStr != todayStr {
-            lastRunDateStr = todayStr
+        // 只有到了指定时间，且今天尚未成功签到完毕，且当前没有在签到中
+        if isPastScheduledTime && lastRunDateStr != todayStr && !isCheckingAll {
             addLog("⏰ 触发每日定时签到任务 (\(todayStr) \(String(format: "%02d:%02d", hour, minute)))", level: .info)
             Task {
                 await checkinAll()
+                
+                // 检查是否仍有未签到的有效账号
+                let pendingCount = self.accounts.filter { $0.status != .alreadyCheckedIn && $0.status != .expired }.count
+                if pendingCount == 0 {
+                    self.lastRunDateStr = todayStr
+                    self.addLog("✅ 今日全部有效账号已签到完毕，锁定今日定时", level: .success)
+                } else {
+                    self.addLog("⚠️ 尚有 \(pendingCount) 个账号未完成签到，稍后将自动补偿重试", level: .warning)
+                }
             }
         }
     }
