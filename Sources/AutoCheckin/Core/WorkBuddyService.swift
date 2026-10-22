@@ -174,7 +174,9 @@ struct WorkBuddyService {
     
     // MARK: - API Calls
     static func queryStatus(account: AccountItem) async throws -> (checkedIn: Bool, totalCredits: String) {
-        guard let url = URL(string: "\(apiBase)/checkin-status") else {
+        // 客户端 5.8.x 起状态查询已切换到 checkin-activity-status；
+        // 旧 checkin-status 返回全零死数据（active=false、未签到），会误判真实签到状态。
+        guard let url = URL(string: "\(apiBase)/checkin-activity-status") else {
             throw URLError(.badURL)
         }
         
@@ -206,12 +208,9 @@ struct WorkBuddyService {
         }
         
         let d = (json["data"] as? [String: Any]) ?? [:]
-        var checkedIn = (d["today_checked_in"] as? Bool) ?? false
-        if !checkedIn, let lastTime = account.lastCheckinTime {
-            if Calendar.current.isDateInToday(lastTime) {
-                checkedIn = true
-            }
-        }
+        // 只信服务端字段：本地 lastCheckinTime 可能来自一次并未真正生效的签到
+        // （活动未开启时签到接口照样返回成功），用它覆盖服务端状态会让假成功卡死一整天。
+        let checkedIn = (d["today_checked_in"] as? Bool) ?? false
         
         // 读取真实的可用总积分
         let realCredits = await queryTotalCredits(account: account)
@@ -244,11 +243,17 @@ struct WorkBuddyService {
             let code = json["code"] as? Int ?? -1
             let msg = (json["msg"] as? String) ?? "请求异常"
             
-            if code == 0 {
-                let credit = ((json["data"] as? [String: Any])?["credit"] as? Int) ?? 0
-                return (true, credit, "签到成功")
-            } else if code == 10001 {
-                return (true, 0, "今日已签到")
+            if code == 0 || code == 10001 {
+                // 接口说成功/已签到后，仍回查状态接口向服务端确认今日签到确实记录在案，
+                // 防止接口语义再变化时出现"假成功"。
+                if let status = try? await queryStatus(account: account) {
+                    if status.checkedIn {
+                        let credit = code == 0 ? (((json["data"] as? [String: Any])?["credit"] as? Int) ?? 0) : 0
+                        return (true, credit, code == 0 ? "签到成功" : "今日已签到")
+                    }
+                    return (false, 0, "签到接口返回成功，但服务端未记录今日签到（签到活动可能未开启）")
+                }
+                return (false, 0, "签到接口返回成功，但状态回查失败，无法确认签到是否生效")
             } else {
                 return (false, 0, msg)
             }

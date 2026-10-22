@@ -78,6 +78,18 @@ final class CheckinManager {
         get { UserDefaults.standard.string(forKey: "lastRunDateStr") ?? "" }
         set { UserDefaults.standard.set(newValue, forKey: "lastRunDateStr") }
     }
+
+    /// 定时任务当天的自动触发次数（跨天自动清零）。
+    /// 有账号一直签不上时，失败补偿重试必须封顶，否则每 30 秒就会打一轮接口。
+    private var attemptsDay: String {
+        get { UserDefaults.standard.string(forKey: "scheduledAttemptsDay") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "scheduledAttemptsDay") }
+    }
+    private var attemptsCount: Int {
+        get { UserDefaults.standard.integer(forKey: "scheduledAttemptsCount") }
+        set { UserDefaults.standard.set(newValue, forKey: "scheduledAttemptsCount") }
+    }
+    private static let maxScheduledAttempts = 3
     
     private var timer: Timer?
     
@@ -374,19 +386,25 @@ final class CheckinManager {
         
         let isPastScheduledTime = (hour > autoCheckinHour) || (hour == autoCheckinHour && minute >= autoCheckinMinute)
         
-        // 只有到了指定时间，且今天尚未成功签到完毕，且当前没有在签到中
-        if isPastScheduledTime && lastRunDateStr != todayStr && !isCheckingAll {
+        // 只有到了指定时间，且今天尚未成功签到完毕，且当前没有在签到中，且当天自动尝试次数未用完
+        let attempts = attemptsDay == todayStr ? attemptsCount : 0
+        if isPastScheduledTime && lastRunDateStr != todayStr && attempts < Self.maxScheduledAttempts && !isCheckingAll {
+            attemptsDay = todayStr
+            attemptsCount = attempts + 1
             addLog("⏰ 触发每日定时签到任务 (\(todayStr) \(String(format: "%02d:%02d", hour, minute)))", level: .info)
             Task {
                 await checkinAll()
-                
+
                 // 检查是否仍有未签到的有效账号
                 let pendingCount = self.accounts.filter { $0.status != .alreadyCheckedIn && $0.status != .expired }.count
+                let attemptNo = attempts + 1
                 if pendingCount == 0 {
                     self.lastRunDateStr = todayStr
                     self.addLog("✅ 今日全部有效账号已签到完毕，锁定今日定时", level: .success)
+                } else if attemptNo < Self.maxScheduledAttempts {
+                    self.addLog("⚠️ 尚有 \(pendingCount) 个账号未完成签到（今日第 \(attemptNo)/\(Self.maxScheduledAttempts) 次自动尝试），稍后将自动补偿重试", level: .warning)
                 } else {
-                    self.addLog("⚠️ 尚有 \(pendingCount) 个账号未完成签到，稍后将自动补偿重试", level: .warning)
+                    self.addLog("⚠️ 尚有 \(pendingCount) 个账号未完成签到，今日 \(Self.maxScheduledAttempts) 次自动尝试已用完，可手动点击「一键全部签到」", level: .warning)
                 }
             }
         }

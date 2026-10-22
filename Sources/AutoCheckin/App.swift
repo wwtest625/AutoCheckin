@@ -53,10 +53,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if event.type == .rightMouseUp {
             // 右键：显示快捷菜单（现代写法：临时赋值 menu 属性）
             let menu = NSMenu()
-            menu.addItem(NSMenuItem(title: "打开 AutoCheckin", action: #selector(showWindow), keyEquivalent: ""))
+            let openItem = NSMenuItem(title: "打开 AutoCheckin", action: #selector(showWindow), keyEquivalent: "")
+            openItem.target = self
+            // 退出的 terminate: 实现在 NSApplication 上；
+            // 显式指给 NSApp，避免 nil target 在无 key window 的菜单栏场景下校验失败被置灰
+            let quitItem = NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+            quitItem.target = NSApp
+            menu.addItem(openItem)
             menu.addItem(.separator())
-            menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-            menu.items.forEach { $0.target = self }
+            menu.addItem(quitItem)
             statusItem?.menu = menu
             statusItem?.button?.performClick(nil)
             statusItem?.menu = nil   // 点击后清空，保留左键自定义逻辑
