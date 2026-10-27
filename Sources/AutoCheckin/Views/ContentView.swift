@@ -47,7 +47,7 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AppTheme.sidebar)
+        .background(AppTheme.canvas)
         .animation(.easeInOut(duration: 0.18), value: manager.selectedTab)
     }
 
@@ -138,6 +138,7 @@ struct ContentView: View {
             .padding(.top, 14)
             .padding(.bottom, 16)
         }
+        .background(.ultraThinMaterial)
         .background(AppTheme.sidebar)
     }
 
@@ -295,7 +296,8 @@ struct ContentView: View {
                     .padding(.top, 8)
 
                     ForEach(manager.accounts) { account in
-                        AccountCardView(account: account) {
+                        let delta = manager.creditSummary.points.last(where: { $0.accountId == account.id })?.netDelta
+                        AccountCardView(account: account, todayDelta: delta) {
                             Task { await manager.checkinAccount(id: account.id) }
                         }
                         .contextMenu {

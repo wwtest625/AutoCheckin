@@ -4,7 +4,7 @@ enum AppTheme {
     static let accent = Color(red: 0.30, green: 0.39, blue: 0.94)
     static let canvas = Color(nsColor: .windowBackgroundColor)
     static let card = Color(nsColor: .controlBackgroundColor)
-    static let sidebar = Color(nsColor: .underPageBackgroundColor)
+    static let sidebar = Color(nsColor: .windowBackgroundColor).opacity(0.5)
     static let success = Color(red: 0.16, green: 0.62, blue: 0.43)
     static let warning = Color(red: 0.88, green: 0.55, blue: 0.16)
 }
