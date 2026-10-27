@@ -111,7 +111,7 @@ struct AutoCheckinApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(manager: manager)
-                .frame(minWidth: 740, idealWidth: 820, minHeight: 520, idealHeight: 600)
+                .frame(minWidth: 920, idealWidth: 1060, minHeight: 620, idealHeight: 720)
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)

@@ -10,6 +10,14 @@ final class CheckinManager {
     var isScanning: Bool = false
     var selectedTab: Int = 0
     
+    // 积分历史与 14 天图表统计状态
+    var selectedCreditAccountId: String? = nil {
+        didSet {
+            refreshCreditSummary()
+        }
+    }
+    var creditSummary: CreditSummary = CreditSummary()
+    
     // 日志控制台状态
     var logFilterLevel: LogLevel? = nil
     var logSearchText: String = ""
@@ -108,6 +116,16 @@ final class CheckinManager {
         // 2. 启动定时器并进行首次时间比对与跨天检查
         setupTimer()
         checkScheduledTime()
+        refreshCreditSummary()
+    }
+    
+    // MARK: - 积分时序统计
+    func refreshCreditSummary() {
+        self.creditSummary = CreditHistoryStorage.shared.getSummary(
+            accountId: selectedCreditAccountId,
+            allAccounts: accounts,
+            days: 14
+        )
     }
     
     func addLog(_ content: String, level: LogLevel = .info) {
@@ -206,6 +224,7 @@ final class CheckinManager {
         }
         // 持久化保存最新状态与积分
         AccountStorage.saveAccounts(accounts)
+        refreshCreditSummary()
         addLog("全量状态与积分查询完毕。", level: .info)
     }
     
@@ -226,10 +245,17 @@ final class CheckinManager {
         accounts[index].isLoading = true
         
         do {
+            var verifiedSnapshotBalance: Double? = nil
+            
             switch acc.platform {
             case .trae:
-                let (checkedIn, credits) = try await TraeService.queryStatus(account: acc)
-                accounts[index].credits = credits
+                let (checkedIn, creditsOpt, isVerified) = try await TraeService.queryStatus(account: acc)
+                if let credits = creditsOpt {
+                    accounts[index].credits = credits
+                    if isVerified {
+                        verifiedSnapshotBalance = accounts[index].numericCredits
+                    }
+                }
                 if checkedIn {
                     accounts[index].status = .alreadyCheckedIn
                     accounts[index].statusDetail = "今日已签到"
@@ -237,10 +263,15 @@ final class CheckinManager {
                     accounts[index].status = .pending
                     accounts[index].statusDetail = "今日待签到"
                 }
-                addLog("[\(acc.platform.rawValue) - \(acc.name)] 状态: \(checkedIn ? "今日已签" : "今日待签"), 剩余积分: \(credits)", level: .info)
+                addLog("[\(acc.platform.rawValue) - \(acc.name)] 状态: \(checkedIn ? "今日已签" : "今日待签"), 剩余积分: \(accounts[index].credits)", level: .info)
             case .workbuddy:
-                let (checkedIn, totalCredits) = try await WorkBuddyService.queryStatus(account: acc)
-                accounts[index].credits = totalCredits
+                let (checkedIn, creditsOpt, isVerified) = try await WorkBuddyService.queryStatus(account: acc)
+                if let credits = creditsOpt {
+                    accounts[index].credits = credits
+                    if isVerified {
+                        verifiedSnapshotBalance = accounts[index].numericCredits
+                    }
+                }
                 if checkedIn {
                     accounts[index].status = .alreadyCheckedIn
                     accounts[index].statusDetail = "今日已签到"
@@ -248,7 +279,12 @@ final class CheckinManager {
                     accounts[index].status = .pending
                     accounts[index].statusDetail = "今日待签到"
                 }
-                addLog("[\(acc.platform.rawValue) - \(acc.name)] 状态: \(checkedIn ? "今日已签" : "今日待签"), 剩余积分: \(totalCredits)", level: .info)
+                addLog("[\(acc.platform.rawValue) - \(acc.name)] 状态: \(checkedIn ? "今日已签" : "今日待签"), 剩余积分: \(accounts[index].credits)", level: .info)
+            }
+            
+            // 仅在明确从官方服务拿到可信且验证过的积分时才打点，杜绝超时或解析异常写入 0 积分假数据
+            if let verifiedNum = verifiedSnapshotBalance {
+                CreditHistoryStorage.shared.recordSnapshot(accountId: acc.id, balance: verifiedNum)
             }
         } catch {
             accounts[index].statusDetail = "查询出错: \(error.localizedDescription)"
@@ -274,11 +310,17 @@ final class CheckinManager {
                 if res.success {
                     accounts[index].status = .alreadyCheckedIn
                     accounts[index].statusDetail = "今日已签到"
-                    if !res.credits.isEmpty {
+                    var hasVerified = false
+                    if !res.credits.isEmpty && !res.credits.hasPrefix("--") {
                         accounts[index].credits = res.credits
+                        hasVerified = true
                     }
                     accounts[index].lastCheckinTime = Date()
                     AccountStorage.saveAccounts(accounts)
+                    if hasVerified, let num = accounts[index].numericCredits {
+                        CreditHistoryStorage.shared.recordSnapshot(accountId: acc.id, balance: num)
+                    }
+                    refreshCreditSummary()
                     addLog("[\(acc.platform.rawValue) - \(acc.name)] 签到成功！当前剩余积分: \(accounts[index].credits)", level: .success)
                 } else {
                     accounts[index].status = .failed
@@ -291,10 +333,18 @@ final class CheckinManager {
                     accounts[index].status = .alreadyCheckedIn
                     accounts[index].statusDetail = res.message
                     accounts[index].lastCheckinTime = Date()
+                    var hasVerified = false
                     if let status = try? await WorkBuddyService.queryStatus(account: acc) {
-                        accounts[index].credits = status.totalCredits
+                        if let c = status.displayCredits {
+                            accounts[index].credits = c
+                            hasVerified = status.isVerified
+                        }
                     }
                     AccountStorage.saveAccounts(accounts)
+                    if hasVerified, let num = accounts[index].numericCredits {
+                        CreditHistoryStorage.shared.recordSnapshot(accountId: acc.id, balance: num)
+                    }
+                    refreshCreditSummary()
                     addLog("[\(acc.platform.rawValue) - \(acc.name)] \(res.message)！当前剩余积分: \(accounts[index].credits)", level: .success)
                 } else {
                     accounts[index].status = .failed
@@ -339,6 +389,7 @@ final class CheckinManager {
         }
         
         AccountStorage.saveAccounts(accounts)
+        refreshCreditSummary()
         addLog("============== 批量签到全部完成 ==============", level: .success)
         isCheckingAll = false
     }

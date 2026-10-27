@@ -19,5 +19,6 @@ AutoCheckin.app/
 
 # Local User Data / Saved Credentials
 saved_accounts.json
+credit_history*.json
 *.log
 scratch/

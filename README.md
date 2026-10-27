@@ -32,6 +32,11 @@
   - **定时签到**：内置后台静默定时调度器，设定时间自动打卡；支持**开机登录自启**，重启电脑后不会漏签。
   - **实时日志**：内置交互式日志控制台，接口调用流程、扫描失败原因（目录缺失 / 字段变更 / 解密失败）逐条可追溯。
 
+- **📊 积分时序看板 & 14 天双向柱状图**
+  - **原生 Swift Charts 渲染**：利用 Apple 原生 `Charts` 框架，打造高颜值双向增减柱状图。
+  - **全自动时序打点**：每次签到、刷新时自动记录本地快照（0600 私有安全权限），按自然日精准聚合。
+  - **净增减洞察**：无论是每日签到奖励（正向绿柱）还是日常编码模型消耗（负向红柱），收支动态一目了然；支持全部账号合并或单账号独立筛选。
+
 ---
 
 ## 🛠 架构一览
@@ -46,14 +51,17 @@ AutoCheckin
 │   │   ├── WorkBuddyService.swift  # WorkBuddy 本地凭证扫描（含诊断信息）、Token 提取与打卡接口
 │   │   ├── CheckinManager.swift    # 状态中心、定时调度、并发执行管理
 │   │   ├── AccountStorage.swift    # 账号信息持久化 + 稳定 ID 合并 + 删除忽略名单
+│   │   ├── CreditHistoryStorage.swift # 每日积分时序快照存储 (0600权限) 与 14 天净增减聚合计算
 │   │   ├── LoginItemService.swift  # 开机登录自启（SMAppService）
 │   │   └── ApiError.swift          # 带 HTTP 状态码与响应片段的接口错误描述
 │   ├── Models/
 │   │   ├── AccountModel.swift      # 账号与平台数据结构定义
+│   │   ├── CreditHistoryModel.swift# 积分时序快照与 14 天聚合模型
 │   │   └── LogEntry.swift          # 实时控制台日志模型
 │   └── Views/
-│       ├── ContentView.swift       # 核心主容器（账号概览、日志面板、设置界面）
+│       ├── ContentView.swift       # 核心主容器（账号概览、积分看板、日志面板、设置界面）
 │       ├── AccountCardView.swift   # 账号状态卡片（积分、签到按钮、右键菜单）
+│       ├── CreditHistoryView.swift # 近 14 天每日积分双向柱状图与明细流水看板
 │       ├── LogConsoleView.swift    # 实时流式控制台日志视图
 │       └── SettingsView.swift      # 定时任务、触发时间与安全设置
 ├── Resources/

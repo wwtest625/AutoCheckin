@@ -4,7 +4,7 @@ import AppKit
 struct LogConsoleView: View {
     @Bindable var manager: CheckinManager
     let onClear: () -> Void
-    
+
     private var filteredLogs: [LogMessage] {
         manager.logs.filter { item in
             let matchesLevel = manager.logFilterLevel == nil || item.level == manager.logFilterLevel
@@ -15,333 +15,207 @@ struct LogConsoleView: View {
             return matchesLevel && matchesSearch
         }
     }
-    
-    private var countTotal: Int { manager.logs.count }
-    private var countSuccess: Int { manager.logs.filter { $0.level == .success }.count }
-    private var countWarning: Int { manager.logs.filter { $0.level == .warning }.count }
-    private var countError: Int { manager.logs.filter { $0.level == .error }.count }
-    
+
+    private func count(_ level: LogLevel) -> Int {
+        manager.logs.filter { $0.level == level }.count
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            // 顶部工具栏
-            topToolbar
-            
-            Divider()
-            
-            // 筛选栏与搜索栏
-            filterAndSearchBar
-            
-            Divider()
-            
-            // 日志主列表
+            toolbar
+            Divider().opacity(0.6)
             logListView
         }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
-        )
-    }
-    
-    // MARK: - 顶部工具栏
-    private var topToolbar: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "terminal.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.blue)
-                
-                Text("运行控制台")
-                    .font(.system(size: 13, weight: .semibold))
-                
-                Text("\(countTotal) 条记录")
-                    .font(.caption2)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.12))
-                    .clipShape(Capsule())
-                    .foregroundStyle(.secondary)
-            }
-            
-            Spacer()
-            
-            // 自动触底开关
-            Button {
-                manager.logAutoScroll.toggle()
-            } label: {
-                Label(
-                    manager.logAutoScroll ? "自动滚动 (开)" : "自动滚动 (关)",
-                    systemImage: manager.logAutoScroll ? "arrow.down.to.line.compact" : "pause.circle"
-                )
-                .font(.caption)
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(manager.logAutoScroll ? .blue : .secondary)
-            .help(manager.logAutoScroll ? "新日志产生时自动滚至底部" : "暂停自动触底")
-            
-            // 复制全部日志
-            Button {
-                copyAllLogs()
-            } label: {
-                Label("复制日志", systemImage: "doc.on.doc")
-                    .font(.caption)
-            }
-            .buttonStyle(.borderless)
-            .disabled(manager.logs.isEmpty)
-            .foregroundStyle(.secondary)
-            .help("将当前全部日志复制到系统剪贴板")
-            
-            // 清空日志
-            Button(role: .destructive, action: onClear) {
-                Label("清空", systemImage: "trash")
-                    .font(.caption)
-            }
-            .buttonStyle(.borderless)
-            .disabled(manager.logs.isEmpty)
-            .help("清空所有日志输出")
+        .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
-    
-    // MARK: - 筛选栏与搜索栏
-    private var filterAndSearchBar: some View {
-        HStack(spacing: 10) {
-            // 分类筛选 Pills
-            HStack(spacing: 6) {
-                filterChip(title: "全部", count: countTotal, level: nil, color: .primary)
-                filterChip(title: "成功", count: countSuccess, level: .success, color: .green)
-                filterChip(title: "警告", count: countWarning, level: .warning, color: .orange)
-                filterChip(title: "错误", count: countError, level: .error, color: .red)
-            }
-            
-            Spacer()
-            
-            // 搜索框
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                
-                TextField("搜索账号、UID 或日志内容...", text: $manager.logSearchText)
-                    .textFieldStyle(.plain)
-                    .font(.caption)
-                
-                if !manager.logSearchText.isEmpty {
-                    Button {
-                        manager.logSearchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+
+    private var toolbar: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 7) {
+                filterChip(title: "全部", count: manager.logs.count, level: nil)
+                filterChip(title: "成功", count: count(.success), level: .success)
+                filterChip(title: "警告", count: count(.warning), level: .warning)
+                filterChip(title: "错误", count: count(.error), level: .error)
+
+                Spacer()
+
+                HStack(spacing: 7) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    TextField("搜索日志", text: $manager.logSearchText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 11))
+                    if !manager.logSearchText.isEmpty {
+                        Button {
+                            manager.logSearchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .frame(width: 210)
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 7))
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .frame(width: 220)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.secondary.opacity(0.2), lineWidth: 0.8)
-            )
+
+            HStack(spacing: 13) {
+                Text("显示 \(filteredLogs.count) / \(manager.logs.count) 条")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    manager.logAutoScroll.toggle()
+                } label: {
+                    Label("跟随最新", systemImage: manager.logAutoScroll ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 10))
+                        .foregroundStyle(manager.logAutoScroll ? AppTheme.accent : .secondary)
+                }
+                .buttonStyle(.plain)
+                Button {
+                    copyAllLogs()
+                } label: {
+                    Label("复制", systemImage: "doc.on.doc")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .disabled(filteredLogs.isEmpty)
+                Button(role: .destructive, action: onClear) {
+                    Label("清空", systemImage: "trash")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .disabled(manager.logs.isEmpty)
+            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.25))
+        .padding(14)
     }
-    
-    @ViewBuilder
-    private func filterChip(title: String, count: Int, level: LogLevel?, color: Color) -> some View {
-        let isSelected = manager.logFilterLevel == level
-        Button {
+
+    private func filterChip(title: String, count: Int, level: LogLevel?) -> some View {
+        let selected = manager.logFilterLevel == level
+        return Button {
             manager.logFilterLevel = level
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 Text(title)
-                    .font(.caption)
-                    .fontWeight(isSelected ? .semibold : .regular)
-                
-                if count > 0 {
-                    Text("\(count)")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(
-                            Capsule()
-                                .fill(isSelected ? (level?.color ?? .secondary) : Color.secondary.opacity(0.18))
-                        )
-                        .foregroundStyle(isSelected ? Color.white : Color.secondary)
-                }
+                Text("\(count)")
+                    .font(.system(size: 9, design: .rounded))
+                    .foregroundStyle(.secondary)
             }
+            .font(.system(size: 10, weight: selected ? .semibold : .regular))
+            .foregroundStyle(selected ? AppTheme.accent : .secondary)
             .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected ? color.opacity(0.15) : Color.clear)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(isSelected ? color.opacity(0.4) : Color.clear, lineWidth: 1)
-            )
-            .foregroundStyle(isSelected ? color : .secondary)
+            .padding(.vertical, 6)
+            .background(selected ? AppTheme.accent.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
     }
-    
-    // MARK: - 日志滚动列表
+
     private var logListView: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 if filteredLogs.isEmpty {
                     emptyStateView
                 } else {
-                    LazyVStack(spacing: 3) {
+                    LazyVStack(spacing: 0) {
                         ForEach(filteredLogs) { log in
                             logRowView(log)
                                 .id(log.id)
                         }
                     }
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 7)
                 }
             }
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
             .onChange(of: manager.logs.count) {
                 if manager.logAutoScroll, let last = filteredLogs.last {
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    withAnimation(.easeOut(duration: 0.18)) {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
                 }
             }
         }
     }
-    
-    // MARK: - 单行渲染
-    @ViewBuilder
+
     private func logRowView(_ log: LogMessage) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            // 1. 时间戳
+        HStack(alignment: .top, spacing: 10) {
             Text(log.formattedTime)
-                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(.tertiary)
-                .frame(width: 58, alignment: .leading)
-            
-            // 2. 状态徽章 Badge
-            HStack(spacing: 3) {
-                Image(systemName: log.level.icon)
-                    .font(.system(size: 9))
-                Text(log.level.rawValue)
-                    .font(.system(size: 10, weight: .medium))
+                .frame(width: 56, alignment: .leading)
+                .padding(.top, 2)
+
+            Image(systemName: log.level.icon)
+                .font(.system(size: 10))
+                .foregroundStyle(log.level.color)
+                .frame(width: 13)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 4) {
+                if let tag = log.tag {
+                    Text(tag)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                Text(log.cleanMessage)
+                    .font(.system(size: 11))
+                    .foregroundStyle(log.level == .error ? .red : .primary)
+                    .lineSpacing(2)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(log.level.color.opacity(0.14))
-            .foregroundStyle(log.level.color)
-            .clipShape(Capsule())
-            
-            // 3. 业务 Tag
-            if let tag = log.tag {
-                Text(tag)
-                    .font(.system(size: 10, weight: .semibold))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(tagBadgeColor(tag).opacity(0.12))
-                    .foregroundStyle(tagBadgeColor(tag))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-            }
-            
-            // 4. 清晰正文
-            Text(log.cleanMessage)
-                .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(logMessageColor(log.level))
-                .lineLimit(2)
-                .textSelection(.enabled)
-            
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.clear)
-        )
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
         .contextMenu {
-            Button("复制消息正文") {
-                copySingleLog(log.cleanMessage)
-            }
-            Button("复制整条日志 (含时间与标签)") {
+            Button("复制消息正文") { copySingleLog(log.cleanMessage) }
+            Button("复制整条日志") {
                 copySingleLog("[\(log.formattedTime)] [\(log.level.rawValue)] \(log.content)")
             }
         }
     }
-    
-    // MARK: - 空状态
+
     private var emptyStateView: some View {
         VStack(spacing: 12) {
-            Image(systemName: manager.logs.isEmpty ? "doc.text.magnifyingglass" : "line.3.horizontal.decrease.circle")
-                .font(.system(size: 38))
+            Image(systemName: manager.logs.isEmpty ? "text.alignleft" : "line.3.horizontal.decrease.circle")
+                .font(.system(size: 27, weight: .light))
                 .foregroundStyle(.tertiary)
-            
-            Text(manager.logs.isEmpty ? "暂无运行日志" : "未找到匹配的日志")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.secondary)
-            
-            Text(manager.logs.isEmpty ? "点击顶部「一键签到」或「刷新扫描」，将在此展示详细执行过程。" : "尝试更改筛选分类或清除搜索关键词。")
+            Text(manager.logs.isEmpty ? "这里还很安静" : "没有匹配的日志")
+                .font(.system(size: 13, weight: .medium))
+            Text(manager.logs.isEmpty ? "扫描或签到后，执行过程会记录在这里" : "尝试更换分类或清除搜索关键词")
                 .font(.caption)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-            
+                .foregroundStyle(.secondary)
             if !manager.logs.isEmpty && (manager.logFilterLevel != nil || !manager.logSearchText.isEmpty) {
-                Button("重置筛选条件") {
+                Button("重置筛选") {
                     manager.logFilterLevel = nil
                     manager.logSearchText = ""
                 }
-                .font(.caption)
                 .buttonStyle(.bordered)
+                .controlSize(.small)
+                .padding(.top, 4)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 240)
+        .frame(maxWidth: .infinity, minHeight: 300)
         .padding(30)
     }
-    
-    // MARK: - Helpers
-    private func logMessageColor(_ level: LogLevel) -> Color {
-        switch level {
-        case .info: return .primary
-        case .success: return .primary
-        case .warning: return .orange
-        case .error: return .red
-        }
-    }
-    
-    private func tagBadgeColor(_ tag: String) -> Color {
-        if tag.contains("Trae") {
-            return .blue
-        } else if tag.contains("WorkBuddy") {
-            return .purple
-        } else if tag.contains("定时") {
-            return .teal
-        } else if tag.contains("扫描") {
-            return .indigo
-        } else {
-            return .secondary
-        }
-    }
-    
+
     private func copyAllLogs() {
         let text = filteredLogs.map { log in
             "[\(log.formattedTime)] [\(log.level.rawValue)] \(log.content)"
         }.joined(separator: "\n")
-        
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        copySingleLog(text)
     }
-    
+
     private func copySingleLog(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)

@@ -20,6 +20,9 @@ enum LoginItemService {
 
     static var isEnabled: Bool { SMAppService.mainApp.status == .enabled }
 
+    /// 裸调试进程没有可供系统登记的 App Bundle，设置页应直接说明并禁用开关。
+    static var canRegister: Bool { !isRunningAsPlainExecutable }
+
     /// 开启或关闭登录自启。
     static func setEnabled(_ enabled: Bool) -> LoginItemOutcome {
         let service = SMAppService.mainApp

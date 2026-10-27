@@ -173,7 +173,7 @@ struct WorkBuddyService {
     }
     
     // MARK: - API Calls
-    static func queryStatus(account: AccountItem) async throws -> (checkedIn: Bool, totalCredits: String) {
+    static func queryStatus(account: AccountItem) async throws -> (checkedIn: Bool, displayCredits: String?, isVerified: Bool) {
         // 客户端 5.8.x 起状态查询已切换到 checkin-activity-status；
         // 旧 checkin-status 返回全零死数据（active=false、未签到），会误判真实签到状态。
         guard let url = URL(string: "\(apiBase)/checkin-activity-status") else {
@@ -212,11 +212,15 @@ struct WorkBuddyService {
         // （活动未开启时签到接口照样返回成功），用它覆盖服务端状态会让假成功卡死一整天。
         let checkedIn = (d["today_checked_in"] as? Bool) ?? false
         
-        // 读取真实的可用总积分
+        // 读取真实的可用总积分（确保不写入虚假的 0 积分）
         let realCredits = await queryTotalCredits(account: account)
-        let displayCredits = realCredits ?? "\((d["total_credits"] as? Int) ?? 0) 积分"
-        
-        return (checkedIn, displayCredits)
+        if let realCredits = realCredits {
+            return (checkedIn, realCredits, true)
+        } else if let c = d["total_credits"] as? Int, c > 0 {
+            return (checkedIn, "\(c) 积分", false)
+        } else {
+            return (checkedIn, nil, false)
+        }
     }
     
     static func claimCheckin(account: AccountItem) async throws -> (success: Bool, credit: Int, message: String) {

@@ -275,7 +275,7 @@ struct TraeService {
     }
     
     // MARK: - API Calls
-    static func queryStatus(account: AccountItem) async throws -> (checkedIn: Bool, credits: String) {
+    static func queryStatus(account: AccountItem) async throws -> (checkedIn: Bool, displayCredits: String?, isVerified: Bool) {
         guard let url = URL(string: "\(apiBase)/status") else {
             throw URLError(.badURL)
         }
@@ -305,11 +305,16 @@ struct TraeService {
         let dict = (rawJson["data"] as? [String: Any]) ?? rawJson
         let checkedIn = (dict["checked_in"] as? Bool) ?? (dict["did_checked_in"] as? Bool) ?? false
         
-        // 读取真实的可用总积分
+        // 读取真实的可用总积分（确保不写入虚假的 0 积分）
         let realCredits = await queryTotalCredits(account: account)
-        let displayCredits = realCredits ?? "\((dict["credits"] as? Int) ?? 0) 积分"
-        
-        return (checkedIn, displayCredits)
+        if let realCredits = realCredits {
+            return (checkedIn, realCredits, true)
+        } else if let c = dict["credits"] as? Int, c > 0 {
+            // dict 中的 credits 字段仅在大于 0 时作为弱参考
+            return (checkedIn, "\(c) 积分", false)
+        } else {
+            return (checkedIn, nil, false)
+        }
     }
     
     static func claimCheckin(account: AccountItem) async throws -> (success: Bool, credits: String, message: String) {
@@ -344,10 +349,10 @@ struct TraeService {
         
         if code == 0 {
             // 签到成功后重新查询最新总积分
-            if let status = try? await queryStatus(account: account) {
-                return (true, status.credits, "签到成功")
+            if let status = try? await queryStatus(account: account), let credits = status.displayCredits {
+                return (true, credits, "签到成功")
             }
-            return (true, "-- 积分", "签到成功")
+            return (true, "", "签到成功")
         } else if code == 9095 {
             return (false, "", "设备限制: 本机今日已为其他账号签到(一机一日限一次)")
         } else if code == 9074 {

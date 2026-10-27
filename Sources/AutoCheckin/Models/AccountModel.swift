@@ -95,4 +95,10 @@ struct AccountItem: Identifiable, Sendable {
 
     /// 钥匙串条目键名。
     var credentialKey: String { "account/\(id)" }
+
+    /// 解析后的纯数值积分，用于时序打点与柱状图统计
+    var numericCredits: Double? {
+        let clean = credits.replacingOccurrences(of: " 积分", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return Double(clean)
+    }
 }
